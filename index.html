@@ -45,81 +45,216 @@
         <footer></footer>
 
         <script>
+            const config = {};
             const utils = {};
+            const libs = {};
 
             class Database {
                 static NAME = 'work_tool_db';
                 static VERSION = 1;
                 static STORES = {
-                    USER: { keyPath: 'seq' },
+                    USER: { keyPath: 'id' },
+                    SESSION: { keyPath: 'id' },
                 };
 
                 constructor() {
-                    this.database = null;
+                    this.db = null;
                 }
 
                 async init() {
-                    await this.open();
+                    this.db = await this.open();
+                    return this.db;
                 }
 
                 open() {
-                    const promise = new Promise((resolve, reject) => {
-                        const database = indexedDB.open(Database.NAME, Database.VERSION);
+                    return new Promise((resolve, reject) => {
+                        const request = indexedDB.open(Database.NAME, Database.VERSION);
 
-                        database.onupgradeneeded = (event) => {
+                        request.onupgradeneeded = (event) => {
                             const db = event.target.result;
 
-                            for (let storeName of Object.keys(Database.STORES)) {
-                                const keyPath = this.stores[storeName];
-
+                            for (const [storeName, options] of Object.entries(Database.STORES)) {
                                 if (!db.objectStoreNames.contains(storeName)) {
-                                    db.createObjectStore(storeName, keyPath);
+                                    db.createObjectStore(storeName, options);
                                 }
                             }
                         };
 
-                        database.onsuccess = (event) => {
-                            this.database = event.target.result;
+                        request.onsuccess = (event) => {
                             resolve(event.target.result);
                         };
 
-                        database.onerror = (event) => {
-                            reject(event.target.errorCode);
+                        request.onerror = () => {
+                            reject(request.error);
+                        };
+
+                        request.onblocked = () => {
+                            reject(new Error('IndexedDB open blocked'));
                         };
                     });
+                }
 
-                    return promise;
+                select(storeName, key) {
+                    return new Promise((resolve, reject) => {
+                        const transaction = this.db.transaction(storeName, 'readonly');
+                        const store = transaction.objectStore(storeName);
+
+                        let request;
+
+                        if (key == null) {
+                            request = store.getAll();
+                        } else {
+                            request = store.get(key);
+                        }
+
+                        request.onsuccess = () => {
+                            resolve(request.result);
+                        };
+
+                        request.onerror = () => {
+                            reject(request.error);
+                        };
+
+                        transaction.onerror = () => {
+                            reject(transaction.error);
+                        };
+
+                        transaction.onabort = () => {
+                            reject(transaction.error);
+                        };
+                    });
+                }
+
+                update(storeName, value) {
+                    return new Promise((resolve, reject) => {
+                        const transaction = this.db.transaction(storeName, 'readwrite');
+                        const store = transaction.objectStore(storeName);
+
+                        const request = store.put(value);
+
+                        request.onerror = () => {
+                            reject(request.error);
+                        };
+
+                        transaction.oncomplete = () => {
+                            resolve(true);
+                        };
+
+                        transaction.onerror = () => {
+                            reject(transaction.error);
+                        };
+
+                        transaction.onabort = () => {
+                            reject(transaction.error);
+                        };
+                    });
+                }
+
+                delete(storeName, key) {
+                    return new Promise((resolve, reject) => {
+                        const transaction = this.db.transaction(storeName, 'readwrite');
+                        const store = transaction.objectStore(storeName);
+
+                        const request = store.delete(key);
+
+                        request.onerror = () => {
+                            reject(request.error);
+                        };
+
+                        transaction.oncomplete = () => {
+                            resolve(true);
+                        };
+
+                        transaction.onerror = () => {
+                            reject(transaction.error);
+                        };
+
+                        transaction.onabort = () => {
+                            reject(transaction.error);
+                        };
+                    });
+                }
+
+                close() {
+                    if (this.db !== null) {
+                        this.db.close();
+                    }
+
+                    this.db = null;
                 }
             }
 
             class EntityBase {
-                constructor() {}
+                constructor(key) {
+                    if (typeof key !== 'string' || key.trim() === '') {
+                        throw new Error('invalid key');
+                    }
+
+                    this.key = key;
+                }
             }
 
-            class User extends EntityBase {
-                constructor(username, password) {
+            class UserEntity extends EntityBase {
+                constructor(key, params) {
+                    super(key);
+
+                    const { username } = params ?? {};
+
                     this.username = username;
-                    this.password = password;
+                }
+            }
+
+            class SessionEntity extends EntityBase {
+                constructor(key, params) {
+                    super(key);
+
+                    const { isDeleted, expires } = params ?? {};
+
+                    this.isDeleted = isDeleted ?? false;
+                    this.expires = expires ?? null; // ms
                 }
 
-                getUsername() {
-                    return this.username;
+                isValid(now) {
+                    if (this.isDeleted === true) {
+                        return false;
+                    }
+
+                    if (this.expires === null) {
+                        return false;
+                    }
+
+                    const isExpires = now > this.expires;
+
+                    return !isExpires;
                 }
 
-                getPassword() {
-                    return this.password;
+                delete() {
+                    this.isDeleted = true;
                 }
             }
 
             class ServiceManager {
                 static SERVICES = {
                     AUTHENTICATION: 'authentication',
+                    USER: 'user',
                 };
 
-                constructor() {
-                    this.services = {};
+                constructor(dependency) {
+                    const { database } = dependency ?? {};
 
-                    this.services[ServiceManager.SERVICES.AUTHENTICATION] = new Authentication({ root: this });
+                    this.database = database;
+
+                    this.userService = new UserService();
+                    this.sessionService = new SessionService({ database: this.database, userService: this.userService });
+                    this.authenticationService = new AuthenticationService({ database: this.database, userService: this.userService, sessionService: this.sessionService });
+
+                    this.services = {};
+                    this.services[ServiceManager.SERVICES.USER] = this.userService;
+                    this.services[ServiceManager.SERVICES.AUTHENTICATION] = this.authenticationService;
+                }
+
+                async init() {
+                    Promise.all([this.sessionService.init]);
                 }
 
                 get(serviceName) {
@@ -137,24 +272,86 @@
                         throw new Error('abstract');
                     }
                 }
+            }
 
-                init() {
-                    throw new Error('init required');
+            class UserService extends IService {
+                constructor() {
+                    super();
+
+                    this.hashAdapter = new JsShaAdapter();
+                }
+
+                isUser(username, password) {}
+
+                _createUserId(username, password) {
+                    const text = `${username}:${password}`;
+                    const hash = this.hashAdapter.sha256Hex(text);
+
+                    return hash;
                 }
             }
 
-            class Authentication extends IService {
-                constructor() {
+            class SessionService extends IService {
+                constructor(dependency) {
                     super();
+
+                    const { database, userService } = dependency ?? {};
+
+                    this.database = database;
+                    this.userService = userService;
+
+                    this.session = null;
+                }
+
+                async init() {
+                    const sessionId = utils.cookie.get(utils.cookie.KEYS.SESSION);
+
+                    if (!sessionId) {
+                        return;
+                    }
+
+                    const stored = this.database.select(Database.STORES.SESSION, sessionId);
+
+                    this.session = new SessionEntity(sessionId, stored);
                 }
 
                 get() {
-                    return false;
+                    return this.session;
+                }
+            }
+
+            class AuthenticationService extends IService {
+                constructor(dependency) {
+                    super();
+
+                    const { database, userService, sessionService } = dependency ?? {};
+
+                    this.database = database;
+                    this.userService = userService;
+                    this.sessionService = sessionService;
                 }
 
-                set(username, password) {
-                    const user = new User(username, password);
+                isLogin() {
+                    const session = this.sessionService.get();
 
+                    if (session == null || !session.isValid(Date.now())) {
+                        return false;
+                    }
+
+                    return true;
+                }
+
+                login(username, password) {
+                    const isUser = this.userService.isUser(username, password);
+
+                    if (!isUser) {
+                        this.register(username, password);
+                    }
+
+
+                }
+
+                register(username, password) {
                     return true;
                 }
             }
@@ -183,6 +380,10 @@
 
             class IView {
                 constructor(dependency) {
+                    if (new.target === IView) {
+                        throw new Error('abstract');
+                    }
+
                     const { state, serviceManager, rootUpdate } = dependency ?? {};
 
                     if (state == null || serviceManager == null || rootUpdate == null) {
@@ -203,21 +404,21 @@
                 constructor(dependency) {
                     super(dependency);
 
-                    this.authn = this.serviceManager.get(ServiceManager.SERVICES.AUTHENTICATION);
+                    this.authenticationService = this.serviceManager.get(ServiceManager.SERVICES.AUTHENTICATION);
 
                     this.rootEl = document.querySelector('#login_view');
                     this.loginFormEl = document.querySelector('#login_form');
 
-                    this.loginFormEl.addEventListener('submit', this.handleLogin.bind(this));
+                    this.loginFormEl.addEventListener('submit', this._handleLogin.bind(this));
                 }
 
                 render() {
-                    if (this.state.isLogin) {
+                    if (!this.state.isLogin) {
                         this.rootEl.classList.add('display');
                     }
                 }
 
-                handleLogin(event) {
+                _handleLogin(event) {
                     event.preventDefault();
 
                     const formData = new FormData(e.target);
@@ -225,7 +426,7 @@
                     const username = formData.get('username');
                     const password = formData.get('password');
 
-                    const result = this.authn.set(username, password);
+                    const result = this.authenticationService.login(username, password);
 
                     if (result) {
                         this.state.isLogin = true;
@@ -247,24 +448,33 @@
                 }
 
                 async run() {
-                    await this.init();
+                    await this._init();
 
                     this.viewManager.render();
                 }
 
-                async init() {
+                async _init() {
                     await this.database.init();
-                    this.initState();
+                    await this.serviceManager.init();
+                    this._initState();
                 }
 
-                initState() {
-                    const authn = this.serviceManager.get(ServiceManager.SERVICES.AUTHENTICATION);
+                _initState() {
+                    const authenticationService = this.serviceManager.get(ServiceManager.SERVICES.AUTHENTICATION);
 
-                    this.state.isLogin = authn.get();
+                    this.state.isLogin = authenticationService.isLogin();
                 }
             }
 
+            config.SESSION = {
+                EXPIRES: 30,
+            };
+
             utils.cookie = {};
+
+            utils.cookie.KEYS = {
+                SESSION: 'work_tool_cookie',
+            };
 
             utils.cookie.get = (name) => {
                 if (typeof name !== 'string' || name.trim() === '') {
@@ -301,6 +511,42 @@
 
                 document.cookie = `${encodedName}=${encodedValue}; max-age=${expires}; path=/; Secure; SameSite=None`;
             };
+
+            utils.encoding = {};
+
+            utils.encoding.base32ToHex = (value) => {
+                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+                let bits = '';
+                let hex = '';
+
+                const normalized = value.replace(/=+$/g, '').toUpperCase();
+
+                for (let i = 0; i < normalized.length; i++) {
+                    const index = chars.indexOf(normalized[i]);
+
+                    if (index === -1) {
+                        return null;
+                    }
+
+                    bits += index.toString(2).padStart(5, '0');
+                }
+
+                for (let i = 0; i + 4 <= bits.length; i += 4) {
+                    hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+                }
+
+                return hex;
+            };
+
+            class JsShaAdapter {
+                sha256Hex(text) {
+                    const shaObj = new jsSHA('SHA-256', 'TEXT');
+
+                    shaObj.update(text);
+
+                    return shaObj.getHash('HEX');
+                }
+            }
 
             const app = new App();
 
