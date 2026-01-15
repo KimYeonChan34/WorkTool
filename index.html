@@ -5,684 +5,835 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
         <title>work tool</title>
-
-        <style>
-            .view {
-                display: none;
-            }
-
-            .view.display {
-                display: block;
-            }
-        </style>
-
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/jsSHA/2.4.2/sha.js"></script>
     </head>
 
     <body>
-        <header>
-            <h1>Work Tool</h1>
-        </header>
-
-        <main id="app">
-            <section id="login_view" class="view">
-                <h2>Login</h2>
-
-                <form id="login_form">
-                    <label>
-                        username:
-                        <input type="text" name="username" required />
-                    </label>
-                    <label>
-                        password:
-                        <input type="password" name="password" required />
-                    </label>
-                    <button type="submit">login</button>
-                </form>
-            </section>
-        </main>
-
-        <footer></footer>
+        <app></app>
 
         <script>
-            const SECOND = 1;
-            const MINUTE = SECOND * 60;
-            const HOUR = MINUTE * 60;
-            const DAY = HOUR * 24;
+            ((window) => {
+                const SECOND = 1;
+                const MINUTE = SECOND * 60;
+                const HOUR = MINUTE * 60;
+                const DAY = HOUR * 24;
 
-            class EncodingUtils {
-                static base32ToHex(value) {
-                    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-                    let bits = '';
-                    let hex = '';
-
-                    const normalized = value.replace(/=+$/g, '').toUpperCase();
-
-                    for (let i = 0; i < normalized.length; i++) {
-                        const index = chars.indexOf(normalized[i]);
-
-                        if (index === -1) {
+                class CookieUtils {
+                    static get(name) {
+                        if (typeof name !== 'string' || name.trim() === '') {
                             return null;
                         }
 
-                        bits += index.toString(2).padStart(5, '0');
-                    }
+                        const encodedName = encodeURIComponent(name);
+                        const cookie = `; ${document.cookie}`;
+                        const value = cookie.split(`; ${encodedName}=`);
 
-                    for (let i = 0; i + 4 <= bits.length; i += 4) {
-                        hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
-                    }
-
-                    return hex;
-                }
-            }
-
-            class CookieUtils {
-                static get(name) {
-                    if (typeof name !== 'string' || name.trim() === '') {
-                        return null;
-                    }
-
-                    const encodedName = encodeURIComponent(name);
-                    const cookie = `; ${document.cookie}`;
-                    const value = cookie.split(`; ${encodedName}=`);
-
-                    if (value.length === 2) {
-                        return decodeURIComponent(value[1].split(';')[0]);
-                    }
-
-                    return null;
-                }
-
-                /**
-                 * @param {string} name
-                 * @param {string} value
-                 * @param {number} expires - seconds
-                 */
-                static set(name, value, expires) {
-                    if (typeof name !== 'string' || name.trim() === '') {
-                        return;
-                    }
-
-                    if (value === null || value === undefined) {
-                        return;
-                    }
-
-                    if (typeof expires !== 'number' || expires < 0) {
-                        return;
-                    }
-
-                    const encodedName = encodeURIComponent(name);
-                    const encodedValue = encodeURIComponent(String(value));
-
-                    document.cookie = `${encodedName}=${encodedValue}; max-age=${expires}; path=/; Secure; SameSite=None`;
-                }
-            }
-
-            class JsShaAdapter {
-                hash(text) {
-                    const shaObj = new jsSHA('SHA-256', 'TEXT');
-
-                    shaObj.update(text);
-
-                    return shaObj.getHash('HEX');
-                }
-            }
-
-            class Database {
-                static NAME = 'work_tool_db';
-                static VERSION = 1;
-                static STORES = {
-                    USER: 'user',
-                    SESSION: 'session',
-                };
-                static STORE_CONFIG = {
-                    [Database.STORES.USER]: { keyPath: 'id' },
-                    [Database.STORES.SESSION]: { keyPath: 'id' },
-                };
-
-                constructor() {
-                    this.db = null;
-                }
-
-                async setup() {
-                    this.db = await this._open();
-                }
-
-                _open() {
-                    return new Promise((resolve, reject) => {
-                        const request = indexedDB.open(Database.NAME, Database.VERSION);
-
-                        request.onupgradeneeded = (event) => {
-                            const db = event.target.result;
-
-                            for (const storeName of Object.values(Database.STORES)) {
-                                if (!db.objectStoreNames.contains(storeName)) {
-                                    db.createObjectStore(storeName, Database.STORE_CONFIG[storeName]);
-                                }
-                            }
-                        };
-
-                        request.onsuccess = (event) => {
-                            resolve(event.target.result);
-                        };
-
-                        request.onerror = () => {
-                            reject(request.error);
-                        };
-
-                        request.onblocked = () => {
-                            reject(new Error('IndexedDB open blocked'));
-                        };
-                    });
-                }
-
-                select(storeName, key) {
-                    return new Promise((resolve, reject) => {
-                        const transaction = this.db.transaction(storeName, 'readonly');
-                        const store = transaction.objectStore(storeName);
-
-                        let request;
-
-                        if (key == null) {
-                            request = store.getAll();
-                        } else {
-                            request = store.get(key);
+                        if (value.length === 2) {
+                            return decodeURIComponent(value[1].split(';')[0]);
                         }
 
-                        request.onsuccess = () => {
-                            resolve(request.result);
-                        };
-
-                        request.onerror = () => {
-                            reject(request.error);
-                        };
-
-                        transaction.onerror = () => {
-                            reject(transaction.error);
-                        };
-
-                        transaction.onabort = () => {
-                            reject(transaction.error);
-                        };
-                    });
-                }
-
-                update(storeName, value) {
-                    return new Promise((resolve, reject) => {
-                        const transaction = this.db.transaction(storeName, 'readwrite');
-                        const store = transaction.objectStore(storeName);
-
-                        const request = store.put(value);
-
-                        request.onerror = () => {
-                            reject(request.error);
-                        };
-
-                        transaction.oncomplete = () => {
-                            resolve(true);
-                        };
-
-                        transaction.onerror = () => {
-                            reject(transaction.error);
-                        };
-
-                        transaction.onabort = () => {
-                            reject(transaction.error);
-                        };
-                    });
-                }
-
-                delete(storeName, key) {
-                    return new Promise((resolve, reject) => {
-                        const transaction = this.db.transaction(storeName, 'readwrite');
-                        const store = transaction.objectStore(storeName);
-
-                        const request = store.delete(key);
-
-                        request.onerror = () => {
-                            reject(request.error);
-                        };
-
-                        transaction.oncomplete = () => {
-                            resolve(true);
-                        };
-
-                        transaction.onerror = () => {
-                            reject(transaction.error);
-                        };
-
-                        transaction.onabort = () => {
-                            reject(transaction.error);
-                        };
-                    });
-                }
-
-                close() {
-                    if (this.db !== null) {
-                        this.db.close();
-                    }
-
-                    this.db = null;
-                }
-            }
-
-            class EntityBase {
-                constructor(key) {
-                    if (typeof key !== 'string' || key.trim() === '') {
-                        throw new Error('invalid key');
-                    }
-
-                    this.key = key;
-                }
-            }
-
-            class UserEntity extends EntityBase {
-                constructor(key, params) {
-                    super(key);
-
-                    this.username = params?.username ?? {};
-                }
-            }
-
-            class SessionEntity extends EntityBase {
-                constructor(key, params) {
-                    super(key);
-
-                    /** @type {number|null} 만료 시간 (단위: ms) */
-                    this.expires = params?.expires ?? null;
-                }
-
-                isValid(now) {
-                    if (this.expires === null) {
-                        return false;
-                    }
-
-                    const isExpires = now > this.expires;
-
-                    return !isExpires;
-                }
-
-                getKey() {
-                    return this.key;
-                }
-
-                getExpires() {
-                    return this.expires;
-                }
-
-                toObject() {
-                    return {
-                        id: this.key,
-                        expires: this.expires,
-                    };
-                }
-            }
-
-            class IService {
-                constructor() {
-                    if (new.target === IService) {
-                        throw new Error('abstract');
-                    }
-                }
-            }
-
-            class CryptoService extends IService {
-                constructor(dependency) {
-                    super();
-
-                    /** @type {JsShaAdapter} */
-                    this.hashAdapter = dependency.hashAdapter;
-                }
-
-                hash(text) {
-                    return this.hashAdapter.hash(text);
-                }
-            }
-
-            class UserService extends IService {
-                constructor(dependency) {
-                    super();
-
-                    /** @type {Database} */
-                    this.database = dependency.database;
-                    /** @type {CryptoService} */
-                    this.cryptoService = dependency.cryptoService;
-                }
-
-                async register(username, password) {
-                    const userId = this._createUserId(username, password);
-                    const newUser = new UserEntity(userId, { username });
-
-                    const result = await this.database.update(Database.STORES.USER, newUser);
-
-                    return newUser;
-                }
-
-                async isUser(username, password) {
-                    const userId = this._createUserId(username, password);
-                    const user = await this.database.select(Database.STORES.USER, userId);
-
-                    return Boolean(user);
-                }
-
-                async getUser(username, password) {
-                    const userId = this._createUserId(username, password);
-
-                    const user = await this.database.select(Database.STORES.USER, userId);
-
-                    return user;
-                }
-
-                _createUserId(username, password) {
-                    const text = `${username}:${password}`;
-                    const hash = this.cryptoService.hash(text);
-
-                    return hash;
-                }
-            }
-
-            class SessionService extends IService {
-                static SESSION_COOKIE = 'session';
-                static SESSION_COOKIE_EXPRISE = 12 * HOUR;
-
-                constructor(dependency) {
-                    super();
-
-                    /** @type {Database} */
-                    this.database = dependency.database;
-                    /** @type {CryptoService} */
-                    this.cryptoService = dependency.cryptoService;
-                    /** @type {UserService} */
-                    this.userService = dependency.userService;
-                }
-
-                async create(username) {
-                    const text = `${username}:${Date.now()}`;
-                    const hash = this.cryptoService.hash(text);
-
-                    /** @type {SessionEntity} */
-                    const session = new SessionEntity(hash, {
-                        expires: Date.now() + SessionService.SESSION_COOKIE_EXPRISE * 1000,
-                    });
-
-                    CookieUtils.set(SessionService.SESSION_COOKIE, session.getKey(), SessionService.SESSION_COOKIE_EXPRISE);
-
-                    await this.database.update(Database.STORES.SESSION, session.toObject());
-                }
-
-                async get() {
-                    const sessionId = CookieUtils.get(SessionService.SESSION_COOKIE);
-
-                    if (!sessionId) {
                         return null;
                     }
 
-                    const stored = await this.database.select(Database.STORES.SESSION, sessionId);
-                    const session = new SessionEntity(sessionId, stored);
+                    /**
+                     * @param {string} name
+                     * @param {string} value
+                     * @param {number} expires - seconds
+                     */
+                    static set(name, value, expires) {
+                        if (typeof name !== 'string' || name.trim() === '') {
+                            return;
+                        }
 
-                    return session;
+                        if (value === null || value === undefined) {
+                            return;
+                        }
+
+                        if (typeof expires !== 'number' || expires < 0) {
+                            return;
+                        }
+
+                        const encodedName = encodeURIComponent(name);
+                        const encodedValue = encodeURIComponent(String(value));
+
+                        document.cookie = `${encodedName}=${encodedValue}; max-age=${expires}; path=/; Secure; SameSite=None`;
+                    }
                 }
-            }
 
-            class AuthenticationService extends IService {
-                constructor(dependency) {
-                    super();
+                class HashAdapter {
+                    async hash(text) {
+                        const msgUint8 = new TextEncoder().encode(text);
+                        const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+                        const hashArray = Array.from(new Uint8Array(hashBuffer));
+                        const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 
-                    /** @type {Database} */
-                    this.database = dependency.database;
-                    /** @type {UserService} */
-                    this.userService = dependency.userService;
-                    /** @type {SessionService} */
-                    this.sessionService = dependency.sessionService;
+                        return hashHex;
+                    }
                 }
 
-                async isLogin() {
-                    /** @type {SessionEntity} */
-                    const session = await this.sessionService.get();
+                class DatabaseAdapterBase {
+                    static STORES = {
+                        USER: 'user',
+                        SESSION: 'session',
+                    };
+                    static STORE_CONFIG = {
+                        [DatabaseAdapterBase.STORES.USER]: { keyPath: 'id' },
+                        [DatabaseAdapterBase.STORES.SESSION]: { keyPath: 'id' },
+                    };
 
-                    if (session == null || !session.isValid(Date.now())) {
-                        return false;
+                    constructor() {
+                        if (new.target === DatabaseAdapterBase) {
+                            throw new Error('Cannot instantiate abstract class');
+                        }
                     }
 
-                    return true;
-                }
-
-                login(username, password) {
-                    const isUser = this.userService.isUser(username, password);
-
-                    if (!isUser) {
-                        this.userService.register(username, password);
+                    async setup() {
+                        throw new Error('Override required');
                     }
 
-                    this.sessionService.create(username);
+                    async insert(storeName, key, value) {
+                        throw new Error('Override required');
+                    }
 
-                    return true;
+                    async selectAll(storeName, key) {
+                        throw new Error('Override required');
+                    }
+
+                    async select(storeName, key) {
+                        throw new Error('Override required');
+                    }
+
+                    async isExists(storeName, key) {
+                        throw new Error('Override required');
+                    }
+
+                    async update(storeName, key, value) {
+                        throw new Error('Override required');
+                    }
+
+                    async delete(storeName, key) {
+                        throw new Error('Override required');
+                    }
                 }
-            }
 
-            class ViewManager {
-                constructor(dependency) {
-                    this.views = new Map();
-                    this.state = {};
+                class IndexedDBAdapter extends DatabaseAdapterBase {
+                    static TRANSACTION = {
+                        READWRITE: 'readwrite',
+                        READONLY: 'readonly',
+                    };
+                    static NAME = 'work_tool_db';
+                    static VERSION = 1;
 
-                    this.views.set('login', dependency.loginView);
+                    constructor() {
+                        super();
+
+                        this.db = null;
+                    }
+
+                    async setup() {
+                        await this.#open();
+                    }
+
+                    #open() {
+                        return new Promise((resolve, reject) => {
+                            const request = indexedDB.open(IndexedDBAdapter.NAME, IndexedDBAdapter.VERSION);
+
+                            request.onupgradeneeded = (event) => {
+                                const db = event.target.result;
+
+                                for (const storeName of Object.values(DatabaseAdapterBase.STORES)) {
+                                    if (!db.objectStoreNames.contains(storeName)) {
+                                        db.createObjectStore(storeName, DatabaseAdapterBase.STORE_CONFIG[storeName]);
+                                    }
+                                }
+                            };
+
+                            request.onsuccess = (event) => {
+                                this.db = event.target.result;
+
+                                resolve(true);
+                            };
+
+                            request.onerror = () => {
+                                console.error(request.error);
+
+                                reject(new Error('IndexedDB open failed'));
+                            };
+
+                            request.onblocked = () => {
+                                reject(new Error('IndexedDB open blocked'));
+                            };
+                        });
+                    }
+
+                    insert(storeName, key, value) {
+                        const preparedValue = this.#prepareValue(storeName, key, value);
+
+                        return this.#query(storeName, 'readwrite', (store) => {
+                            return store.add(preparedValue);
+                        });
+                    }
+
+                    selectAll(storeName) {
+                        return this.#query(storeName, IndexedDBAdapter.TRANSACTION.READONLY, (store) => {
+                            return store.getAll();
+                        });
+                    }
+
+                    select(storeName, key) {
+                        return this.#query(storeName, IndexedDBAdapter.TRANSACTION.READONLY, (store) => {
+                            return store.get(key);
+                        });
+                    }
+
+                    isExists(storeName, key) {
+                        return this.#query(storeName, IndexedDBAdapter.TRANSACTION.READONLY, (store) => {
+                            return store.getKey(key);
+                        });
+                    }
+
+                    update(storeName, key, value) {
+                        const preparedValue = this.#prepareValue(storeName, key, value);
+
+                        return this.#query(storeName, IndexedDBAdapter.TRANSACTION.READWRITE, (store) => {
+                            return store.put(preparedValue);
+                        });
+                    }
+
+                    delete(storeName, key) {
+                        return this.#query(storeName, IndexedDBAdapter.TRANSACTION.READWRITE, (store) => {
+                            return store.delete(key);
+                        });
+                    }
+
+                    #prepareValue(storeName, key, value) {
+                        const config = DatabaseAdapterBase.STORE_CONFIG[storeName];
+                        if (!config) {
+                            throw new Error('Invalid storeName');
+                        }
+
+                        value[config.keyPath] = key;
+
+                        return value;
+                    }
+
+                    #query(storeName, mode, operation) {
+                        return new Promise((resolve, reject) => {
+                            const transaction = this.db.transaction(storeName, mode);
+                            const store = transaction.objectStore(storeName);
+
+                            const request = operation(store);
+
+                            request.onsuccess = () => {
+                                resolve(request.result);
+                            };
+
+                            request.onerror = () => {
+                                reject(request.error);
+                            };
+                        });
+                    }
+
+                    close() {
+                        if (this.db !== null) {
+                            this.db.close();
+                        }
+
+                        this.db = null;
+                    }
                 }
 
-                async render() {
-                    await this._setup();
-                    this.update();
+                class EntityBase {
+                    constructor(key) {
+                        if (new.target === EntityBase) {
+                            throw new Error('Cannot instantiate abstract class');
+                        }
+
+                        this.key = key;
+                    }
+
+                    getKey() {
+                        return this.key;
+                    }
+
+                    getValue() {
+                        const { key, ...data } = this;
+                        return data;
+                    }
                 }
 
-                async _setup() {
-                    const queue = [];
+                class UserEntity extends EntityBase {
+                    constructor(key, params) {
+                        super(key);
 
-                    for (const view of this.views.values()) {
-                        const setupPromise = view.setup({
-                            root: this,
+                        this.username = params?.username ?? '';
+                        this.password = params?.password ?? '';
+                    }
+
+                    getPassword() {
+                        return this.password;
+                    }
+                }
+
+                class SessionEntity extends EntityBase {
+                    constructor(key, params) {
+                        super(key);
+
+                        /** @type {number|null} 만료 시간 (단위: ms) */
+                        this.expires = params?.expires ?? null;
+                    }
+
+                    isValid(now) {
+                        if (this.expires === null) {
+                            return false;
+                        }
+
+                        return now <= this.expires;
+                    }
+                }
+
+                class ModelBase {
+                    constructor() {
+                        if (new.target === ModelBase) {
+                            throw new Error('Cannot instantiate abstract class');
+                        }
+                    }
+                }
+
+                class UserModel extends ModelBase {
+                    constructor(dependency) {
+                        super();
+
+                        this.storeName = DatabaseAdapterBase.STORES.USER;
+
+                        /** @type {DatabaseAdapterBase} */
+                        this.db = dependency?.databaseAdapter;
+                    }
+
+                    /**
+                     * @param {UserEntity} user
+                     */
+                    async create(user) {
+                        const key = user.getKey();
+                        const value = user.getValue();
+
+                        try {
+                            const result = await this.db.insert(this.storeName, key, value);
+
+                            return result;
+                        } catch (error) {
+                            console.error(error);
+                            return false;
+                        }
+                    }
+
+                    async getById(id) {
+                        try {
+                            const result = await this.db.select(this.storeName, id);
+
+                            if (!result) {
+                                return null;
+                            }
+
+                            return new UserEntity(id, result);
+                        } catch (error) {
+                            console.error(error);
+                            return null;
+                        }
+                    }
+
+                    async has(id) {
+                        try {
+                            const result = await this.db.isExists(this.storeName, id);
+
+                            return Boolean(result);
+                        } catch (error) {
+                            console.error(error);
+                            return false;
+                        }
+                    }
+                }
+
+                class SessionModel extends ModelBase {
+                    constructor(dependency) {
+                        super();
+
+                        this.storeName = DatabaseAdapterBase.STORES.SESSION;
+
+                        /** @type {DatabaseAdapterBase} */
+                        this.db = dependency?.databaseAdapter;
+                    }
+
+                    /**
+                     * @param {SessionEntity} session
+                     */
+                    async create(session) {
+                        const key = session.getKey();
+                        const value = session.getValue();
+
+                        try {
+                            const result = await this.db.insert(this.storeName, key, value);
+
+                            return result;
+                        } catch (error) {
+                            console.error(error);
+                            return false;
+                        }
+                    }
+
+                    async getById(id) {
+                        try {
+                            const result = await this.db.select(this.storeName, id);
+
+                            if (!result) {
+                                return null;
+                            }
+
+                            return new SessionEntity(id, result);
+                        } catch (error) {
+                            console.error(error);
+                            return null;
+                        }
+                    }
+                }
+
+                class ServiceBase {
+                    constructor() {
+                        if (new.target === ServiceBase) {
+                            throw new Error('Cannot instantiate abstract class');
+                        }
+                    }
+                }
+
+                class CryptoService extends ServiceBase {
+                    constructor(dependency) {
+                        super();
+
+                        /** @type {HashAdapter} */
+                        this.hashAdapter = dependency.hashAdapter;
+                    }
+
+                    async hash(...args) {
+                        const data = args.join(':');
+
+                        return await this.hashAdapter.hash(data);
+                    }
+
+                    async verifyPassword(password, hashedPassword) {
+                        if (!password || !hashedPassword) {
+                            return false;
+                        }
+
+                        return (await this.hash(password)) === hashedPassword;
+                    }
+                }
+
+                class UserService extends ServiceBase {
+                    constructor(dependency) {
+                        super();
+
+                        /** @type {CryptoService} */
+                        this.cryptoService = dependency.cryptoService;
+                        /** @type {UserModel} */
+                        this.model = dependency.model;
+                    }
+
+                    async register(username, password) {
+                        const userId = await this.cryptoService.hash(username);
+                        const hashedPassword = await this.cryptoService.hash(password);
+
+                        const newUser = new UserEntity(userId, {
+                            username,
+                            password: hashedPassword,
                         });
 
-                        queue.push(setupPromise);
+                        const result = await this.model.create(newUser);
+
+                        return result;
                     }
 
-                    await Promise.all(queue);
-                }
+                    async login(username, password) {
+                        const user = await this.#getUser(username);
 
-                update() {
-                    for (const view of this.views.values()) {
-                        view.render();
+                        if (user === null) {
+                            return false;
+                        }
+
+                        const isValid = await this.#verifyPassword(user, password);
+
+                        if (!isValid) {
+                            return false;
+                        }
+
+                        return true;
                     }
-                }
 
-                getState() {
-                    return this.state;
-                }
-            }
+                    async #getUser(username) {
+                        const userId = await this.cryptoService.hash(username);
 
-            class IView {
-                constructor() {
-                    if (new.target === IView) {
-                        throw new Error('abstract');
+                        const user = await this.model.getById(userId);
+
+                        return user;
                     }
-                }
 
-                async setup(root) {
-                    throw new Error('setup required');
-                }
+                    /**
+                     * @param {UserEntity} user
+                     * @param {string} password
+                     */
+                    async #verifyPassword(user, password) {
+                        const stored = user.getPassword();
 
-                render() {
-                    throw new Error('render required');
-                }
-            }
-
-            class LoginView extends IView {
-                constructor(dependency) {
-                    super(dependency);
-
-                    /** @type {AuthenticationService} */
-                    this.authenticationService = dependency.authenticationService;
-
-                    this.rootEl = document.querySelector('#login_view');
-                    this.loginFormEl = document.querySelector('#login_form');
-
-                    /** @type {ViewManager} */
-                    this.root = null;
-                    this.state = {};
-                }
-
-                async setup(params) {
-                    this.root = params.root;
-                    this.state = this.root.getState();
-
-                    await this._setupState();
-                    this._bindEvent();
-                }
-
-                async _setupState() {
-                    this.state.isLogin = await this.authenticationService.isLogin();
-                }
-
-                _bindEvent() {
-                    this.loginFormEl.addEventListener('submit', this._handleLogin.bind(this));
-                }
-
-                _handleLogin(event) {
-                    event.preventDefault();
-
-                    const formData = new FormData(event.target);
-
-                    const username = formData.get('username');
-                    const password = formData.get('password');
-
-                    const result = this.authenticationService.login(username, password);
-
-                    if (result) {
-                        this.state.isLogin = true;
-
-                        this.root.update();
-                    } else {
-                        alert('login failed');
+                        return await this.cryptoService.verifyPassword(password, stored);
                     }
                 }
 
-                render() {
-                    if (this.state.isLogin) {
-                        this.rootEl.classList.remove('display');
-                    } else {
-                        this.rootEl.classList.add('display');
+                class SessionService extends ServiceBase {
+                    static SESSION_COOKIE = 'session';
+                    static SESSION_COOKIE_EXPRISE = 12 * HOUR;
+
+                    constructor(dependency) {
+                        super();
+
+                        /** @type {CryptoService} */
+                        this.cryptoService = dependency.cryptoService;
+                        /** @type {SessionModel} */
+                        this.model = dependency.model;
+                    }
+
+                    async create(username) {
+                        const nowMs = Date.now();
+                        const sessionId = await this.cryptoService.hash(username, nowMs);
+
+                        const session = new SessionEntity(sessionId, {
+                            expires: nowMs + SessionService.SESSION_COOKIE_EXPRISE * 1000,
+                        });
+
+                        const result = await this.model.create(session);
+
+                        if (!result) {
+                            return false;
+                        }
+
+                        CookieUtils.set(SessionService.SESSION_COOKIE, session.getKey(), SessionService.SESSION_COOKIE_EXPRISE);
+
+                        return true;
+                    }
+
+                    async isAuthenticated() {
+                        /** @type {SessionEntity} */
+                        const session = await this.#get();
+
+                        if (session === undefined || session === null || !session.isValid(Date.now())) {
+                            return false;
+                        }
+
+                        return true;
+                    }
+
+                    async #get() {
+                        const sessionId = CookieUtils.get(SessionService.SESSION_COOKIE);
+
+                        if (!sessionId) {
+                            return null;
+                        }
+
+                        const session = await this.model.getById(sessionId);
+
+                        return session;
                     }
                 }
-            }
 
-            class DIManager {
-                constructor(dependency) {
-                    /** @type {DIContainer} */
-                    this.di = dependency.di;
+                class AuthenticationService extends ServiceBase {
+                    constructor(dependency) {
+                        super();
+
+                        /** @type {UserService} */
+                        this.userService = dependency.userService;
+                        /** @type {SessionService} */
+                        this.sessionService = dependency.sessionService;
+                    }
+
+                    async isLogin() {
+                        const isAuthenticated = await this.sessionService.isAuthenticated();
+
+                        if (!isAuthenticated) {
+                            return false;
+                        }
+
+                        return true;
+                    }
+
+                    async login(username, password) {
+                        const result = await this.userService.login(username, password);
+
+                        if (!result) {
+                            return false;
+                        }
+
+                        await this.sessionService.create(username);
+
+                        return true;
+                    }
                 }
 
-                setup() {
-                    this.di.register('JsShaAdapter', new JsShaAdapter());
-                    this.di.register('Database', new Database());
+                class ViewBase {
+                    constructor() {
+                        if (new.target === ViewBase) {
+                            throw new Error('Cannot instantiate abstract class');
+                        }
 
-                    this.di.register(
-                        'CryptoService',
-                        new CryptoService({
-                            hashAdapter: this.di.get('JsShaAdapter'),
-                        })
-                    );
-                    this.di.register(
-                        'UserService',
-                        new UserService({
-                            database: this.di.get('Database'),
-                            cryptoService: this.di.get('CryptoService'),
-                        })
-                    );
-                    this.di.register(
-                        'SessionService',
-                        new SessionService({
-                            database: this.di.get('Database'),
-                            cryptoService: this.di.get('CryptoService'),
-                            userService: this.di.get('UserService'),
-                        })
-                    );
-                    this.di.register(
-                        'AuthenticationService',
-                        new AuthenticationService({
-                            database: this.di.get('Database'),
-                            userService: this.di.get('UserService'),
-                            sessionService: this.di.get('SessionService'),
-                        })
-                    );
+                        /** @type {ViewManager} */
+                        this.root = null;
+                        this.state = {};
+                    }
 
-                    this.di.register(
-                        'LoginView',
-                        new LoginView({
-                            authenticationService: this.di.get('AuthenticationService'),
-                        })
-                    );
-                    this.di.register(
-                        'ViewManager',
-                        new ViewManager({
-                            loginView: this.di.get('LoginView'),
-                        })
-                    );
-                }
-            }
+                    async setup(root) {
+                        this.root = root;
+                        this.state = this.root.getState();
+                    }
 
-            class DIContainer {
-                constructor() {
-                    this.dependencies = new Map();
+                    render() {
+                        throw new Error('Override required');
+                    }
+
+                    getTemplate() {
+                        throw new Error('Override required');
+                    }
                 }
 
-                register(name, instance) {
-                    if (this.dependencies.has(name)) {
+                class ViewManager {
+                    constructor(dependency) {
+                        this.views = new Map();
+                        this.state = {};
+
+                        this.views.set('login', dependency.loginView);
+                    }
+
+                    async render() {
+                        await this.#setup();
+                        this.update();
+                    }
+
+                    async #setup() {
+                        const queue = [];
+
+                        for (const view of this.views.values()) {
+                            const setupPromise = view.setup({
+                                root: this,
+                            });
+
+                            queue.push(setupPromise);
+                        }
+
+                        await Promise.all(queue);
+                    }
+
+                    update() {
+                        for (const view of this.views.values()) {
+                            view.render();
+                        }
+                    }
+
+                    getState() {
+                        return this.state;
+                    }
+                }
+
+                class LoginView extends ViewBase {
+                    constructor(dependency) {
+                        super(dependency);
+
+                        /** @type {AuthenticationService} */
+                        this.authenticationService = dependency.authenticationService;
+                    }
+
+                    async setup(root) {
+                        super.setup(root);
+
+                        this.#setupState();
+                    }
+
+                    async #setupState() {
+                        this.state.isLogin = await this.authenticationService.isLogin();
+                    }
+
+                    getTemplate() {
+                        const template = `
+                            <section id="login_view" class="view">
+                                <h2>Login</h2>
+
+                                <form id="login_form">
+                                    <label>
+                                        username:
+                                        <input type="text" name="username" required />
+                                    </label>
+                                    <label>
+                                        password:
+                                        <input type="password" name="password" required />
+                                    </label>
+                                    <button type="submit">login</button>
+                                </form>
+                            </section>
+                        `;
+
+                        return template;
+                    }
+
+                    async #handleLogin(event) {
+                        event.preventDefault();
+
+                        const formData = new FormData(event.target);
+
+                        const username = formData.get('username');
+                        const password = formData.get('password');
+
+                        const result = await this.authenticationService.login(username, password);
+
+                        if (result) {
+                            this.state.isLogin = true;
+
+                            this.root.update();
+                        } else {
+                            alert('login failed');
+                        }
+                    }
+                }
+
+                class DIManager {
+                    constructor(dependency) {
+                        /** @type {DIContainer} */
+                        this.di = dependency.di;
+                    }
+
+                    setup() {
+                        this.di.register('HashAdapter', new HashAdapter());
+                        this.di.register('DatabaseAdapter', new IndexedDBAdapter());
+
+                        this.di.register(
+                            'UserModel',
+                            new UserModel({
+                                databaseAdapter: this.di.get('DatabaseAdapter'),
+                            })
+                        );
+                        this.di.register(
+                            'SessionModel',
+                            new SessionModel({
+                                databaseAdapter: this.di.get('DatabaseAdapter'),
+                            })
+                        );
+
+                        this.di.register(
+                            'CryptoService',
+                            new CryptoService({
+                                hashAdapter: this.di.get('HashAdapter'),
+                            })
+                        );
+                        this.di.register(
+                            'UserService',
+                            new UserService({
+                                cryptoService: this.di.get('CryptoService'),
+                                userModel: this.di.get('UserModel'),
+                            })
+                        );
+                        this.di.register(
+                            'SessionService',
+                            new SessionService({
+                                cryptoService: this.di.get('CryptoService'),
+                                sessionModel: this.di.get('SessionModel'),
+                            })
+                        );
+                        this.di.register(
+                            'AuthenticationService',
+                            new AuthenticationService({
+                                userService: this.di.get('UserService'),
+                                sessionService: this.di.get('SessionService'),
+                            })
+                        );
+
+                        this.di.register(
+                            'LoginView',
+                            new LoginView({
+                                authenticationService: this.di.get('AuthenticationService'),
+                            })
+                        );
+                        this.di.register(
+                            'ViewManager',
+                            new ViewManager({
+                                loginView: this.di.get('LoginView'),
+                            })
+                        );
+                    }
+                }
+
+                class DIContainer {
+                    constructor() {
+                        this.dependencies = new Map();
+                    }
+
+                    register(name, instance) {
+                        if (this.dependencies.has(name)) {
+                            return this.dependencies.get(name);
+                        }
+
+                        this.dependencies.set(name, instance);
+
+                        return instance;
+                    }
+
+                    get(name) {
+                        if (!this.dependencies.has(name)) {
+                            throw new Error(`[DIContainer] ${name}을 찾을 수 없습니다.`);
+                        }
+
                         return this.dependencies.get(name);
                     }
-
-                    this.dependencies.set(name, instance);
-
-                    return instance;
                 }
 
-                get(name) {
-                    if (!this.dependencies.has(name)) {
-                        throw new Error(`[DIContainer] ${name}을 찾을 수 없습니다.`);
+                class App {
+                    constructor() {
+                        this.di = new DIContainer();
+                        this.diManager = new DIManager({ di: this.di });
                     }
 
-                    return this.dependencies.get(name);
+                    async run() {
+                        const result = await this.#setup();
+
+                        if (!result) {
+                            return;
+                        }
+
+                        /** @type {ViewManager} */
+                        const viewManager = this.di.get('ViewManager');
+
+                        viewManager.render();
+                    }
+
+                    async #setup() {
+                        try {
+                            this.diManager.setup();
+
+                            await this.#setupDatabase();
+                            this.#setupView();
+
+                            return true;
+                        } catch (error) {
+                            console.error(error);
+
+                            return false;
+                        }
+                    }
+
+                    async #setupDatabase() {
+                        /** @type {DatabaseAdapterBase} */
+                        const databaseAdapter = this.di.get('DatabaseAdapter');
+
+                        await databaseAdapter.setup();
+                    }
+
+                    #setupView() {}
                 }
-            }
 
-            class App {
-                constructor() {
-                    this.di = new DIContainer();
-                    this.diManager = new DIManager({ di: this.di });
-                }
-
-                async run() {
-                    await this._setup();
-
-                    /** @type {ViewManager} */
-                    const viewManager = this.di.get('ViewManager');
-
-                    viewManager.render();
-                }
-
-                async _setup() {
-                    this.diManager.setup();
-
-                    await this._setupDatabase();
-                    this._setupView();
-                }
-
-                async _setupDatabase() {
-                    /** @type {Database} */
-                    const database = this.di.get('Database');
-
-                    await database.setup();
-                }
-
-                _setupView() {}
-            }
+                window.App = App;
+            })(window);
 
             const app = new App();
 
